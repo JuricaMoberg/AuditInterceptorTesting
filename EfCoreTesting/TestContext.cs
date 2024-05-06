@@ -4,6 +4,12 @@ using Microsoft.EntityFrameworkCore;
 
 public class AuditableEntityInterceptorContext : DbContext
 {
+    public AuditableEntityInterceptorContext(DbContextOptions<AuditableEntityInterceptorContext> options)
+        : base(options)
+    {
+
+    }
+
     public DbSet<TestEntity> TestEntities => Set<TestEntity>();
 
     public DbSet<TestEntityLong> TestEntityLongs => Set<TestEntityLong>();
@@ -11,16 +17,6 @@ public class AuditableEntityInterceptorContext : DbContext
     public DbSet<AuditEntry> AuditEntries => Set<AuditEntry>();
 
     public DbSet<OptionalChildTestEntity> OptionalChildTestEntities => Set<OptionalChildTestEntity>();
-
-
-
-    protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
-    {
-        var interceptor = new AuditableEntityInterceptor();
-
-        optionsBuilder.UseNpgsql("Host=localhost;Database=testdb;Username=postgres;Password=admin")
-            .AddInterceptors(interceptor);
-    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {

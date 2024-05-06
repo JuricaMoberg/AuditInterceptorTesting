@@ -1,6 +1,22 @@
 ﻿using EfCoreTesting;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
-var ctx = new AuditableEntityInterceptorContext();
+var services = new ServiceCollection();
+
+services.AddTransient<AuditableEntityInterceptor>();
+
+services.AddDbContext<AuditableEntityInterceptorContext>((serviceProvider, options) =>
+{
+    var interceptor = serviceProvider.GetService<AuditableEntityInterceptor>();
+
+    options.UseNpgsql("Host=localhost;Database=testdb;Username=postgres;Password=admin")
+        .AddInterceptors(interceptor);
+});
+
+var serviceProvider = services.BuildServiceProvider();
+
+var ctx = serviceProvider.GetRequiredService<AuditableEntityInterceptorContext>();
 
 await ctx.Database.EnsureDeletedAsync();
 await ctx.Database.EnsureCreatedAsync();
@@ -14,7 +30,7 @@ ctx.TestEntities.Add(testEntity);
 
 await ctx.SaveChangesAsync();
 
-//var trans = await ctx.Database.BeginTransactionAsync();
+var trans = await ctx.Database.BeginTransactionAsync();
 
 var optionalEntity = new OptionalChildTestEntity
 {
@@ -32,7 +48,6 @@ testEntity.Name = "novo ime";
 
 await ctx.SaveChangesAsync();
 
-
-//await trans.CommitAsync();
+await trans.CommitAsync();
 
 var auditEntries = ctx.AuditEntries.ToList();

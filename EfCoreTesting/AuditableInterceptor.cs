@@ -6,6 +6,9 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 
 public class AuditableEntityInterceptor : SaveChangesInterceptor
 {
+    private bool _transactionTriggeredInInterceptor = false;
+    private bool _auditAlreadySaved = false;
+
     public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(DbContextEventData eventData, InterceptionResult<int> result, CancellationToken cancellationToken = default)
     {
         var dbContext = eventData.Context;
@@ -27,18 +30,22 @@ public class AuditableEntityInterceptor : SaveChangesInterceptor
 
         if (transactionExists)
         {
-            // not sure how to know when we created transaction in interceptor
-            // or we reuse transaction from the code
-            //if(!interceptorTransaction)
-            //{
-            // await dbContext.SaveChangesAsync(cancellationToken);
-            // AddAuditEntriesToContext(auditData, dbContext);
-            //}
+            if (!_transactionTriggeredInInterceptor && !_auditAlreadySaved)
+            {
+
+                _auditAlreadySaved = true;
+                await dbContext.SaveChangesAsync(cancellationToken);
+                AddAuditEntriesToContext(auditData, dbContext);
+            }
+
+            _transactionTriggeredInInterceptor = false;
+            _auditAlreadySaved = false;
 
             return await base.SavingChangesAsync(eventData, result, cancellationToken); ;
         }
 
         var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        _transactionTriggeredInInterceptor = true;
         await dbContext.SaveChangesAsync(cancellationToken);
         AddAuditEntriesToContext(auditData, dbContext);
         var response = await base.SavingChangesAsync(eventData, result, cancellationToken);
@@ -47,39 +54,10 @@ public class AuditableEntityInterceptor : SaveChangesInterceptor
         return response;
     }
 
-    public override InterceptionResult<int> SavingChanges(DbContextEventData eventData, InterceptionResult<int> result)
+
+    public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
     {
-        var dbContext = eventData.Context;
-
-        if (dbContext is null)
-        {
-            return base.SavingChanges(eventData, result);
-        }
-
-        var entries = dbContext.ChangeTracker
-            .Entries<IAuditableEntity>()
-            .Where(x => x.State == EntityState.Modified)
-            .ToList();
-
-        var auditData = GetAuditData(entries)
-            .ToList();
-
-        if (true)
-        {
-
-            dbContext.SaveChanges();
-            AddAuditEntriesToContext(auditData, dbContext);
-
-            return base.SavingChanges(eventData, result);
-        }
-
-        if (true)
-        {
-
-            AddAuditEntriesToContext(auditData, dbContext);
-        }
-
-        return base.SavingChanges(eventData, result);
+        return base.SavedChangesAsync(eventData, result, cancellationToken);
     }
 
 
