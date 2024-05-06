@@ -44,7 +44,7 @@ public class AuditableEntityInterceptor : SaveChangesInterceptor
             return await base.SavingChangesAsync(eventData, result, cancellationToken); ;
         }
 
-        var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         _transactionTriggeredInInterceptor = true;
         await dbContext.SaveChangesAsync(cancellationToken);
         AddAuditEntriesToContext(auditData, dbContext);
