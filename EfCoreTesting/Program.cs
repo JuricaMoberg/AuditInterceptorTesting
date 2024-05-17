@@ -26,8 +26,8 @@ var testEntity = new TestEntity
     Name = "test",
 };
 
-ctx.TestEntities.Add(testEntity);
 
+ctx.TestEntities.Add(testEntity);
 await ctx.SaveChangesAsync();
 
 var trans = await ctx.Database.BeginTransactionAsync();
@@ -51,3 +51,5 @@ await ctx.SaveChangesAsync();
 await trans.CommitAsync();
 
 var auditEntries = ctx.AuditEntries.ToList();
+
+var x = 0;

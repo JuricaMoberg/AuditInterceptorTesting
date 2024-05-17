@@ -20,7 +20,12 @@ public class AuditableEntityInterceptor : SaveChangesInterceptor
 
         var entries = dbContext.ChangeTracker
             .Entries<IAuditableEntity>()
-            .Where(x => x.State == EntityState.Modified)
+            .Where(x => x.State == EntityState.Modified || x.State == EntityState.Added)
+            .Select(x =>
+                new EntityEntryWrapper
+                {
+                    Entry = x
+                })
             .ToList();
 
         var auditData = GetAuditData(entries)
@@ -35,7 +40,7 @@ public class AuditableEntityInterceptor : SaveChangesInterceptor
 
                 _auditAlreadySaved = true;
                 await dbContext.SaveChangesAsync(cancellationToken);
-                AddAuditEntriesToContext(auditData, dbContext);
+                AddAuditEntriesToContext(auditData, entries, dbContext);
             }
 
             _transactionTriggeredInInterceptor = false;
@@ -47,22 +52,14 @@ public class AuditableEntityInterceptor : SaveChangesInterceptor
         using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
         _transactionTriggeredInInterceptor = true;
         await dbContext.SaveChangesAsync(cancellationToken);
-        AddAuditEntriesToContext(auditData, dbContext);
+        AddAuditEntriesToContext(auditData, entries, dbContext);
         var response = await base.SavingChangesAsync(eventData, result, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         return response;
     }
 
-
-    public override ValueTask<int> SavedChangesAsync(SaveChangesCompletedEventData eventData, int result, CancellationToken cancellationToken = default)
-    {
-        return base.SavedChangesAsync(eventData, result, cancellationToken);
-    }
-
-
-
-    private void AddAuditEntriesToContext(List<AuditData> auditData, DbContext dbContext)
+    private void AddAuditEntriesToContext(List<AuditData> auditData, List<EntityEntryWrapper> entryWrappers, DbContext dbContext)
     {
         if (!auditData.Any())
         {
@@ -70,45 +67,36 @@ public class AuditableEntityInterceptor : SaveChangesInterceptor
         }
 
         var dbContextId = dbContext.ContextId.ToString();
-        var entries = dbContext.ChangeTracker
-            .Entries<IAuditableEntity>()
-            .ToList();
-
-        var auditEntries = GetAuditEntries(entries, auditData, dbContextId);
+        var auditEntries = GetAuditEntries(entryWrappers, auditData, dbContextId);
 
         dbContext.Set<AuditEntry>().AddRange(auditEntries);
     }
 
-    private IEnumerable<AuditData> GetAuditData(IEnumerable<EntityEntry<IAuditableEntity>> entries)
+    private IEnumerable<AuditData> GetAuditData(List<EntityEntryWrapper> entryWrappers)
     {
-
-        foreach (var entry in entries)
+        foreach (var entryWrapper in entryWrappers)
         {
-            var modifiedProperties = entry.Properties
+            var isAdded = entryWrapper.Entry.State == EntityState.Added;
+
+            var modifiedProperties = entryWrapper.Entry.Properties
                 .Where(x => !x.Metadata.ClrType.IsClass || x.Metadata.ClrType == typeof(string))
-                .Where(x => x.IsModified)
                 .ToList();
 
-            var tempPropertyChanged = modifiedProperties
-                .Where(x => x.IsTemporary)
-                .Any();
+            // use WhereIf instead
+            if (!isAdded)
+            {
+                modifiedProperties = modifiedProperties
+                    .Where(x => x.IsModified)
+                    .ToList();
+            }
 
             var oldProperties = modifiedProperties.ToDictionary(x => x.Metadata.Name, x => x.OriginalValue)!;
-
             var oldSerializedProperties = JsonSerializer.Serialize(oldProperties);
-
-            var idObject = entry.Properties
-                 .Where(x => x.Metadata.Name == nameof(TestEntity.Id))
-                 .Select(x => x.OriginalValue)
-                 .FirstOrDefault()!;
-
-            // just casting to long/int won't work since it can be either one of those
-            var entityId = Convert.ToInt64(idObject);
 
             yield return new AuditData
             {
-                EntityType = entry.Metadata.Name,
-                EntityId = entityId,
+                EntityType = entryWrapper.Entry.Metadata.Name,
+                EntityKey = entryWrapper.Key,
                 OldSerializedProperties = oldSerializedProperties,
                 ModifiedProperties = modifiedProperties
                     .Select(x => x.Metadata.Name)
@@ -117,29 +105,34 @@ public class AuditableEntityInterceptor : SaveChangesInterceptor
         }
     }
 
-    private IEnumerable<AuditEntry> GetAuditEntries(List<EntityEntry<IAuditableEntity>> entries, List<AuditData> auditsData, string saveChangesKey)
+    private IEnumerable<AuditEntry> GetAuditEntries(List<EntityEntryWrapper> entryWrappers, List<AuditData> auditsData, string saveChangesKey)
     {
         foreach (var auditData in auditsData)
         {
-            var entry = entries
-                .Where(x => x.Metadata.Name == auditData.EntityType)
-                .Where(x => Convert.ToInt64(x.Properties
-                    .Where(x => x.Metadata.Name == nameof(TestEntity.Id))
-                    .Select(x => x.OriginalValue)
-                    .First()) == auditData.EntityId)
+            var entryWrapper = entryWrappers
+                .Where(x => x.Entry.Metadata.Name == auditData.EntityType)
+                .Where(x => x.Key == auditData.EntityKey)
                 .First();
 
-            var modifiedProperties = entry.Properties
+            var modifiedProperties = entryWrapper.Entry.Properties
                 .Where(x => !x.Metadata.ClrType.IsClass || x.Metadata.ClrType == typeof(string))
                 .Where(x => auditData.ModifiedProperties.Contains(x.Metadata.Name));
 
             var newProperties = modifiedProperties.ToDictionary(x => x.Metadata.Name, x => x.CurrentValue)!;
             var newSerializedProperties = JsonSerializer.Serialize(newProperties);
 
+            var idObject = entryWrapper.Entry.Properties
+                .Where(x => x.Metadata.Name == nameof(TestEntity.Id))
+                .Select(x => x.OriginalValue)
+                .FirstOrDefault()!;
+
+            // just casting to long/int won't work since it can be either one of those
+            var entityId = Convert.ToInt64(idObject);
+
             yield return new AuditEntry
             {
                 EntityType = auditData.EntityType,
-                EntityId = auditData.EntityId,
+                EntityId = entityId,
                 OldSerializedProperties = auditData.OldSerializedProperties,
                 NewSerializedProperties = newSerializedProperties,
                 SaveChangesKey = saveChangesKey
@@ -152,9 +145,16 @@ public class AuditData
 {
     public List<string> ModifiedProperties { get; set; } = new();
 
-    public long EntityId { get; set; }
+    public Guid EntityKey { get; set; }
 
     public string EntityType { get; set; } = string.Empty;
 
     public string OldSerializedProperties { get; set; } = string.Empty;
+}
+
+public class EntityEntryWrapper
+{
+    public EntityEntry<IAuditableEntity> Entry { get; set; } = null!;
+
+    public Guid Key { get; set; } = Guid.NewGuid();
 }

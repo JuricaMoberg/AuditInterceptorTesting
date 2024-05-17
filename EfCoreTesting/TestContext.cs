@@ -79,7 +79,7 @@ public class TestEntityLong : IAuditableEntity
     public DateTime? UpdateTime { get; set; }
 }
 
-public class OptionalChildTestEntity
+public class OptionalChildTestEntity : IAuditableEntity
 {
     public int Id { get; set; }
 

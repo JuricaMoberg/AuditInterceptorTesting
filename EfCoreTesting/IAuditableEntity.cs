@@ -1,5 +1,5 @@
 ﻿namespace EfCoreTesting;
 
-interface IAuditableEntity
+public interface IAuditableEntity
 {
 }
